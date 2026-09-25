@@ -15,7 +15,8 @@ from normalization import (
     normalize_address,
     extract_postal_code,
     extract_numeric_tokens,
-    normalize_country
+    normalize_country,
+    is_empty_or_nan
 )
 
 # Common generic stopwords to ignore for keys
@@ -40,6 +41,7 @@ DEFAULT_STRATEGY_WEIGHTS = {
     "B6": 4.0,   # Door Number + Locality Token
     "B4": 3.0,   # Postal Code / PIN
     "B3": 2.0,   # Name Prefix (4 chars)
+    "B8": 2.0,   # Character 3-Gram Subwords (typo/transliteration resilience)
     "B7": 1.0    # Distinctive Locality Token
 }
 
@@ -69,12 +71,17 @@ def generate_blocking_keys(
     - B5: Large Numbers / Identifiers (>= 4 digits, phone/pin/code)
     - B6: Number + Locality/City combinations (crucial for Indic transliteration)
     - B7: Significant Locality / City / Landmark tokens (len >= 6)
+    - B8: Rare Character 3-Grams (subword typo resilience)
     """
-    c_norm = normalize_country(country)
-    n_norm = normalize_name(name)
-    a_norm = normalize_address(address)
-    pin = extract_postal_code(address, country)
-    raw_nums = extract_numeric_tokens(address)
+    clean_name = "" if is_empty_or_nan(name) else str(name)
+    clean_addr = "" if is_empty_or_nan(address) else str(address)
+    clean_country = "" if is_empty_or_nan(country) else str(country)
+
+    c_norm = normalize_country(clean_country)
+    n_norm = normalize_name(clean_name)
+    a_norm = normalize_address(clean_addr)
+    pin = extract_postal_code(clean_addr, clean_country)
+    raw_nums = extract_numeric_tokens(clean_addr)
     
     clean_nums = {normalize_num_str(num) for num in raw_nums}
     keys = defaultdict(list)
@@ -85,6 +92,8 @@ def generate_blocking_keys(
         
     # B2: All Significant Name Tokens (up to 4 tokens)
     name_tokens = [t for t in n_norm.split() if t not in NAME_STOPWORDS and len(t) >= 3]
+    if not name_tokens and n_norm.split():
+        name_tokens = [t for t in n_norm.split() if len(t) >= 2]
     for tok in name_tokens[:4]:
         keys["B2"].append(f"{c_norm}_ntok_{tok}")
         
@@ -104,6 +113,8 @@ def generate_blocking_keys(
             
     # B6: Door Number + Locality Token
     addr_words = [w for w in a_norm.split() if w not in ADDRESS_STOPWORDS and len(w) >= 4 and not w.isdigit()]
+    if not addr_words and a_norm.split():
+        addr_words = [w for w in a_norm.split() if len(w) >= 3 and not w.isdigit()]
     for num in clean_nums:
         for w in addr_words[:3]:
             keys["B6"].append(f"{c_norm}_door_{num}_{w}")
@@ -112,6 +123,12 @@ def generate_blocking_keys(
     distinctive_addr = [w for w in addr_words if len(w) >= 6]
     for w in distinctive_addr[:3]:
         keys["B7"].append(f"{c_norm}_loc_{w}")
+
+    # B8: Character 3-Gram Subwords for Typo Resilience (e.g., 'Jhsnno' vs 'Johnson')
+    for tok in name_tokens[:2]:
+        if len(tok) >= 4:
+            for i in range(len(tok) - 2):
+                keys["B8"].append(f"{c_norm}_c3_{tok[i:i+3]}")
         
     return keys
 
@@ -133,17 +150,17 @@ class MultiKeyBlocker:
         self.bucket_sizes = {}
 
     def build_candidate_index(self, df_candidates: pd.DataFrame, show_progress: bool = True):
-        """Build inverted index across candidate records."""
+        """Build inverted index across candidate records with NaN safety."""
         self.index.clear()
         iterator = df_candidates.itertuples(index=False)
         if show_progress:
             iterator = tqdm(iterator, total=len(df_candidates), desc="Indexing Candidate Pool")
             
         for row in iterator:
-            cand_id = row.entity_id
-            name = str(row.business_name or "")
-            addr = str(row.business_address or "")
-            cntry = str(row.country or "")
+            cand_id = str(row.entity_id)
+            name = "" if is_empty_or_nan(getattr(row, "business_name", "")) else str(row.business_name)
+            addr = "" if is_empty_or_nan(getattr(row, "business_address", "")) else str(row.business_address)
+            cntry = "" if is_empty_or_nan(getattr(row, "country", "")) else str(row.country)
             
             cand_keys = generate_blocking_keys(cand_id, name, addr, cntry)
             for strat, key_list in cand_keys.items():
@@ -159,9 +176,10 @@ class MultiKeyBlocker:
         name: str,
         address: str,
         country: str
-    ) -> Set[str]:
+    ) -> List[str]:
         """
         Query inverted index and rank candidate matches via Inverse Bucket Frequency (IBF).
+        Returns candidates in ranked order from highest IBF score to lowest.
         """
         s1_keys = generate_blocking_keys(s1_id, name, address, country)
         cand_scores = defaultdict(float)
@@ -177,28 +195,28 @@ class MultiKeyBlocker:
                         cand_scores[cand_id] += idf_weight
                         
         if not cand_scores:
-            return set()
+            return []
             
-        # Select top candidates by total IBF score
+        # Return ranked list of candidates by descending IBF score
         top_cands = sorted(cand_scores.keys(), key=lambda x: cand_scores[x], reverse=True)[:self.max_candidates_per_s1]
-        return set(top_cands)
+        return top_cands
 
     def generate_candidate_pairs(
         self,
         df_s1: pd.DataFrame,
         show_progress: bool = True
-    ) -> Dict[str, Set[str]]:
-        """Generate candidate set for a batch of S1 records."""
+    ) -> Dict[str, List[str]]:
+        """Generate ranked candidate list for a batch of S1 records."""
         results = {}
         iterator = df_s1.itertuples(index=False)
         if show_progress:
             iterator = tqdm(iterator, total=len(df_s1), desc="Generating Candidates")
             
         for row in iterator:
-            s1_id = row.entity_id
-            name = str(row.business_name or "")
-            addr = str(row.business_address or "")
-            cntry = str(row.country or "")
+            s1_id = str(row.entity_id)
+            name = "" if is_empty_or_nan(getattr(row, "business_name", "")) else str(row.business_name)
+            addr = "" if is_empty_or_nan(getattr(row, "business_address", "")) else str(row.business_address)
+            cntry = "" if is_empty_or_nan(getattr(row, "country", "")) else str(row.country)
             
             results[s1_id] = self.retrieve_candidates_for_record(s1_id, name, addr, cntry)
             

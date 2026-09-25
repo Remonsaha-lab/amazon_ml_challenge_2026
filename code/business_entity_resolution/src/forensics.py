@@ -4,9 +4,18 @@ import os
 import re
 from collections import Counter
 
-DATA_DIR = os.path.join("student_resource", "dataset")
-TRAIN_DIR = os.path.join(DATA_DIR, "train")
-TEST_DIR = os.path.join(DATA_DIR, "test")
+from pathlib import Path
+import sys
+
+# Ensure src directory is on sys.path regardless of where the script is called from
+SRC_DIR = Path(__file__).resolve().parent
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+import config
+
+TRAIN_DIR = config.TRAIN_DIR
+TEST_DIR = config.TEST_DIR
 
 print("=" * 80)
 print("AMAZON ML CHALLENGE 2026: PHASE 1 DATASET FORENSICS & DIAGNOSTICS")
@@ -15,15 +24,15 @@ print("=" * 80)
 # 1. File existence and sizes
 print("\n--- 1. File Sizes & Record Counts ---")
 train_files = {
-    "train_source1": os.path.join(TRAIN_DIR, "train_source1.tsv"),
-    "train_source2": os.path.join(TRAIN_DIR, "train_source2.tsv"),
-    "train_source3": os.path.join(TRAIN_DIR, "train_source3.tsv"),
-    "train_ground_truth": os.path.join(TRAIN_DIR, "train_ground_truth.tsv"),
+    "train_source1": str(config.TRAIN_SOURCE1),
+    "train_source2": str(config.TRAIN_SOURCE2),
+    "train_source3": str(config.TRAIN_SOURCE3),
+    "train_ground_truth": str(config.TRAIN_GROUND_TRUTH),
 }
 test_files = {
-    "test_source1": os.path.join(TEST_DIR, "test_source1.tsv"),
-    "test_source2": os.path.join(TEST_DIR, "test_source2.tsv"),
-    "test_source3": os.path.join(TEST_DIR, "test_source3.tsv"),
+    "test_source1": str(config.TEST_SOURCE1),
+    "test_source2": str(config.TEST_SOURCE2),
+    "test_source3": str(config.TEST_SOURCE3),
 }
 
 for name, path in {**train_files, **test_files}.items():

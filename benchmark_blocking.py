@@ -8,7 +8,8 @@ from collections import defaultdict
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 BASE_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BASE_DIR / "code" / "business_entity_resolution"))
+sys.path.insert(0, str(BASE_DIR / "code" / "business_entity_resolution" / "src"))
+
 
 from blocking import MultiKeyBlocker
 import config

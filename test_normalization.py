@@ -7,7 +7,8 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 # Add project root and module path to sys.path
 BASE_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BASE_DIR / "code" / "business_entity_resolution"))
+sys.path.insert(0, str(BASE_DIR / "code" / "business_entity_resolution" / "src"))
+
 
 from normalization import (
     strip_accents,

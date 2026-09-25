@@ -8,7 +8,7 @@ from pathlib import Path
 
 # Resolve base directories
 CURRENT_DIR = Path(__file__).resolve().parent
-WORKSPACE_ROOT = CURRENT_DIR.parent.parent
+WORKSPACE_ROOT = CURRENT_DIR.parent.parent.parent
 
 # Data directories (prefers student_resource/dataset if present, fallback to dataset/)
 if (WORKSPACE_ROOT / "student_resource" / "dataset").exists():

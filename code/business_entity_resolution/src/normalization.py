@@ -7,7 +7,22 @@ international address parsing, and numeric token extraction.
 
 import re
 import unicodedata
-from typing import Optional, Set
+from typing import Optional, Set, Any
+
+
+def is_empty_or_nan(val: Any) -> bool:
+    """Check if value is None, empty, NaN float, or literal 'nan'/'none'/'null' string."""
+    if val is None:
+        return True
+    if not isinstance(val, str):
+        try:
+            import pandas as pd
+            if pd.isna(val):
+                return True
+        except Exception:
+            pass
+    s = str(val).strip()
+    return not s or s.lower() in ("nan", "none", "null")
 
 
 def strip_accents(text: str) -> str:
@@ -16,11 +31,11 @@ def strip_accents(text: str) -> str:
     'Bóral' -> 'Boral', 'Dréxkor' -> 'Drexkor') for Latin characters while
     preserving non-Latin scripts such as Devanagari (Hindi), Tamil, and Kannada.
     """
-    if not text or not isinstance(text, str):
+    if is_empty_or_nan(text):
         return ""
     
     res = []
-    for ch in text:
+    for ch in str(text):
         # Check if character is in extended Latin range with diacritics
         if ('\u00c0' <= ch <= '\u024f') or ('\u1e00' <= ch <= '\u1eff'):
             decomp = unicodedata.normalize("NFKD", ch)
@@ -35,7 +50,7 @@ def clean_punctuation_and_symbols(text: str) -> str:
     Strips punctuation (P) and symbols (S) while preserving Letters (L),
     Indic Marks/Vowels (M), and Numbers (N).
     """
-    if not text:
+    if is_empty_or_nan(text):
         return ""
     res = []
     for c in text:
@@ -80,10 +95,10 @@ def normalize_name(name: str) -> str:
     - Preserves Indic scripts (Devanagari, Tamil, etc.)
     - Cleans punctuation and normalizes spaces
     """
-    if not name or not isinstance(name, str):
+    if is_empty_or_nan(name):
         return ""
     
-    text = strip_accents(name)
+    text = strip_accents(str(name))
     
     # Extract domain base name if string looks like a website (e.g. 'maurewilliamscolombier.com')
     text = URL_PATTERN.sub(r"\1", text)
@@ -150,10 +165,10 @@ def normalize_address(address: str) -> str:
     - Expands state abbreviations
     - Retains door numbers, building codes, and landmark references
     """
-    if not address or not isinstance(address, str):
+    if is_empty_or_nan(address):
         return ""
     
-    text = strip_accents(address).lower()
+    text = strip_accents(str(address)).lower()
     
     # Clean commas, slashes, periods into whitespace
     text = re.sub(r"[,/\\.;:()#]", " ", text)
@@ -184,21 +199,22 @@ def extract_postal_code(address: str, country: Optional[str] = None) -> Optional
     - India: 6 digits starting with 1-9
     - US / France: 5 digits
     """
-    if not address or not isinstance(address, str):
+    if is_empty_or_nan(address):
         return None
     
-    country_clean = (country or "").strip().lower()
+    addr_str = str(address)
+    country_clean = (str(country) if not is_empty_or_nan(country) else "").strip().lower()
     if country_clean in ("india", "in"):
-        m = PIN_INDIA_PATTERN.search(address)
+        m = PIN_INDIA_PATTERN.search(addr_str)
         if m:
             return m.group(1)
             
-    m_us_fr = PIN_US_FR_PATTERN.search(address)
+    m_us_fr = PIN_US_FR_PATTERN.search(addr_str)
     if m_us_fr:
         return m_us_fr.group(1)
         
     # Fallback to India 6-digit if not matched above
-    m_in = PIN_INDIA_PATTERN.search(address)
+    m_in = PIN_INDIA_PATTERN.search(addr_str)
     if m_in:
         return m_in.group(1)
         
@@ -214,11 +230,11 @@ def extract_numeric_tokens(address: str) -> Set[str]:
     Extract discrete house numbers, shop numbers, building numbers, and plot codes.
     Examples: 'wz-187c', 'af-684', '3315', '1056c', '630'
     """
-    if not address or not isinstance(address, str):
+    if is_empty_or_nan(address):
         return set()
     
     tokens = set()
-    for match in ALPHANUM_NUMBER_PATTERN.finditer(address.lower()):
+    for match in ALPHANUM_NUMBER_PATTERN.finditer(str(address).lower()):
         tok = match.group(1).strip()
         # Keep if it contains at least one digit and length <= 10
         if any(c.isdigit() for c in tok) and len(tok) <= 10:
@@ -231,13 +247,13 @@ def normalize_country(country: str) -> str:
     Open-set country normalizer. Standardizes common variants without
     hardcoding closed-world exclusions.
     """
-    if not country or not isinstance(country, str):
+    if is_empty_or_nan(country):
         return ""
-    c = country.strip().lower()
+    c = str(country).strip().lower()
     if c in ("us", "usa", "united states", "united states of america"):
         return "US"
     if c in ("india", "ind", "republic of india"):
         return "India"
     if c in ("france", "fra", "republic of france"):
         return "France"
-    return country.strip().title()
+    return str(country).strip().title()

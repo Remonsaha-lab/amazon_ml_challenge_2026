@@ -3,6 +3,14 @@ Machine Learning Matcher Models for Amazon ML Challenge 2026.
 Supports head-to-head benchmarking between LightGBM and XGBoost
 on identical entity-grouped splits.
 """
+from pathlib import Path
+import sys
+
+SRC_DIR = Path(__file__).resolve().parent
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+import config
 
 from typing import Dict, Any, Tuple
 import numpy as np

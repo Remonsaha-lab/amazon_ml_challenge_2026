@@ -6,15 +6,18 @@ import pandas as pd
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
 BASE_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(BASE_DIR / "code" / "business_entity_resolution"))
+sys.path.insert(0, str(BASE_DIR / "code" / "business_entity_resolution" / "src"))
+
 
 from blocking import MultiKeyBlocker, generate_blocking_keys
 import config
 
 # Load small sample of GT
-df_gt = pd.read_csv(config.TRAIN_GROUND_TRUTH, sep="\t", nrows=200, dtype=str)
+# Sample 1,000 entities to capture authentic missed links
+df_gt = pd.read_csv(config.TRAIN_GROUND_TRUTH, sep="\t", nrows=5000, dtype=str)
 df_gt["matched_entity_ids"] = df_gt["matched_entity_ids"].fillna("")
-df_gt = df_gt[df_gt["matched_entity_ids"].str.strip() != ""].head(50)
+df_gt = df_gt[df_gt["matched_entity_ids"].str.strip() != ""].head(1000)
+
 
 sample_s1_ids = set(df_gt["source1_entity_id"])
 all_target_ids = set()
@@ -40,12 +43,16 @@ with open(config.TRAIN_SOURCE2, "r", encoding="utf-8") as f:
         parts = line.strip().split("\t")
         if parts[0] in all_target_ids:
             cand_records[parts[0]] = parts
+            if len(cand_records) == len(all_target_ids):
+                break
 
 with open(config.TRAIN_SOURCE3, "r", encoding="utf-8") as f:
     for line in f:
         parts = line.strip().split("\t")
         if parts[0] in all_target_ids:
             cand_records[parts[0]] = parts
+            if len(cand_records) == len(all_target_ids):
+                break
 
 # Build index of these targets
 df_cand = pd.DataFrame(list(cand_records.values()), columns=["entity_id", "business_name", "business_address", "country"])
@@ -83,6 +90,11 @@ for s1_id, true_targets in gt_pairs.items():
             print(f"  S1 Keys       : {dict(s1_keys)}")
             print(f"  Target Keys   : {dict(t_keys)}")
             print(f"  Common Keys   : {common}")
+            if missed_count == 0:
+                print("\nNo missed links found in this sample — 100% recall on the evaluated entities!")
+            else:
+                print(f"\nTotal missed pairs displayed: {missed_count}")
+
             
             if missed_count >= 5:
                 break

@@ -166,25 +166,39 @@ A 24-dimensional feature vector extracted at $>1,700$ records/sec using C++ `Rap
 The solution generates the required zip archive matching competition rules:
 
 ```text
-<team_name>_submission.zip
-├── output/
-│   ├── matching_results.tsv       # S1 entity matches (Uploaded to Leaderboard)
-│   └── candidate_pairs.tsv        # Evaluated candidate set from blocking
+AWS_ml_challenge/
 ├── code/
 │   └── business_entity_resolution/
-│       ├── src/                   # Source code
-│       │   ├── __init__.py
-│       │   ├── config.py          # Paths, thresholds, hyperparams
-│       │   ├── normalization.py   # Multi-language text & address cleanups
-│       │   ├── blocking.py        # 7-key IBF candidate generator
-│       │   ├── features.py        # RapidFuzz 24-dim feature extractor
-│       │   ├── dataset.py         # Entity-grouped splits & hard negative miner
-│       │   ├── models.py          # XGBoost & LightGBM training wrappers
-│       │   ├── decision.py        # Macro F0.5 grid search & inference engine
-│       │   └── run_pipeline.py    # Master end-to-end execution script
-│       ├── README.md              # Complete reproduction guide
-│       └── requirements.txt       # Pinned dependencies
-└── Documentation_template.md      # Completed competition methodology write-up
+│       └── src/
+│           ├── __init__.py           # Package marker
+│           ├── config.py             # Global constants, paths, thresholds, hyperparameters
+│           ├── normalization.py      # Unicode accent stripper, legal canonicalizer, regex parsers
+│           ├── blocking.py           # 7-Key inverted index with IBF candidate ranking
+│           ├── features.py           # RapidFuzz 24-dimensional pairwise feature vector extractor
+│           ├── dataset.py            # RecordCache, grouped splits, and hard negative miner
+│           ├── models.py             # XGBoost & LightGBM training wrappers
+│           ├── decision.py           # Macro F0.5 evaluation metric & grid-search threshold optimizer
+│           ├── forensics.py          # Data auditing, cardinality, and distribution analyzer
+│           └── run_pipeline.py       # Master end-to-end training, streaming inference & submission writer
+├── student_resource/                 # Competition provided resources
+│   ├── dataset/
+│   │   ├── train/                    # 12.5M records (train_source1/2/3.tsv, train_ground_truth.tsv)
+│   │   └── test/                     # 11.7M records (test_source1/2/3.tsv)
+│   ├── utils/
+│   │   └── validate_submission.py    # Official submission format validation script
+│   └── Documentation_template.md     # Competition write-up template
+├── output/                           # Target directory for generated submissions
+│   ├── matching_results.tsv          # Final matched pairs (uploaded to leaderboard)
+│   └── candidate_pairs.tsv           # Candidate pairs output by blocking stage
+├── benchmark_blocking.py             # Benchmark measuring blocking recall on ground truth
+├── benchmark_models.py               # Head-to-head XGBoost vs LightGBM benchmark
+├── test_normalization.py             # Normalization unit tests (Devanagari, Tamil, French, US)
+├── diagnose_blocking_recall.py       # Diagnostic script analyzing theoretical recall ceilings
+├── debug_missed_blocks.py            # In-depth inspector for false negatives in blocking
+├── test_candidate_ranking.py         # Diagnostic for IBF candidate ranking scoring
+├── test_indic.py                     # Indic unicode preservation probe
+└── sample_pairs.py                   # Ground-truth pair inspector for manual qualitative analysis
+
 ```
 
 ---

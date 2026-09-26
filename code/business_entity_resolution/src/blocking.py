@@ -99,9 +99,13 @@ def generate_blocking_keys(
     for tok in name_tokens[:4]:
         keys["B2"].append(f"{c_norm}_ntok_{tok}")
         
-    # B3: Name Prefix Key (first 4 characters)
-    if len(n_norm) >= 4:
-        keys["B3"].append(f"{c_norm}_pfx_{n_norm[:4]}")
+    # B3: Distinctive Name Prefix Key (first significant token prefix + secondary token hint to avoid generic bucket collisions)
+    if len(name_tokens) >= 2:
+        keys["B3"].append(f"{c_norm}_pfx_{name_tokens[0][:4]}_{name_tokens[1][:2]}")
+    elif len(name_tokens) == 1 and len(name_tokens[0]) >= 4:
+        keys["B3"].append(f"{c_norm}_pfx_{name_tokens[0][:5]}")
+    elif len(n_norm) >= 4:
+        keys["B3"].append(f"{c_norm}_pfx_{n_norm[:5]}")
         
     # B4: Postal Code / PIN Key
     if pin:

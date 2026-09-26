@@ -70,7 +70,7 @@ LEGAL_PATTERNS = [
     (re.compile(r"\b(inc\.?|incorporated)\b", re.IGNORECASE), " inc "),
     (re.compile(r"\b(corp\.?|corporation)\b", re.IGNORECASE), " corp "),
     (re.compile(r"\b(llc|l\.l\.c\.|llp|l\.l\.p\.)\b", re.IGNORECASE), " llc "),
-    (re.compile(r"\b(sarl|s\.a\.r\.l\.|sa|s\.a\.|sas|s\.a\.s\.)\b", re.IGNORECASE), " ltd "),
+    (re.compile(r"\b(sarl|s\.a\.r\.l\.|sas|s\.a\.s\.)\b|(?:\b(sa|s\.a\.)\s*$)", re.IGNORECASE), " ltd "),
     (re.compile(r"\b(co\.?|company|cie\.?)\b", re.IGNORECASE), " co "),
     # Hindi / Devanagari legal suffixes
     (re.compile(r"(प्राइवेट\s+लिमिटेड|प्रा\.\s*लि\.|प्रा\s+लि)", re.UNICODE), " ltd "),

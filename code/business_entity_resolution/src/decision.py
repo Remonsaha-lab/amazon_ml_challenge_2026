@@ -1,11 +1,12 @@
 """
 Decision Layer & Competition Macro F0.5 Metric Optimization Module.
 Directly implements the official competition evaluation metric including
-singleton credit (1.0 vs 0.0), precision weighting (2x), and fine-grained
-threshold search across tau in [0.50, 0.99].
+singleton credit (1.0 vs 0.0), precision weighting (2x), fine-grained
+threshold search across tau in [0.50, 0.98] with step 0.005, and
+calibrated top-candidate margin decision logic.
 """
 
-from typing import Dict, List, Set, Tuple, Optional
+from typing import Dict, List, Set, Tuple, Optional, Any
 import numpy as np
 from collections import defaultdict
 
@@ -73,6 +74,64 @@ def evaluate_macro_f05(
     return macro_f05, mean_p, mean_r
 
 
+def filter_candidates_with_margin(
+    candidates_with_probs: List[Any],
+    tau: float,
+    high_conf_tau: float = 0.88,
+    max_margin_drop: float = 0.15
+) -> List[str]:
+    """
+    Calibrated decision-layer filtering with margin and confidence tiers:
+    - If no candidate >= tau: singleton (empty)
+    - High confidence (p >= high_conf_tau): accept (unless extreme PIN conflict with negligible address match).
+    - Medium confidence (tau <= p < high_conf_tau):
+      * Requires margin from best candidate <= max_margin_drop (prevents ambiguous trailing matches)
+      * Rejects candidates with conflicting house numbers or conflicting PINs + weak address match.
+    """
+    valid = []
+    for item in candidates_with_probs:
+        if len(item) >= 5:
+            cid, p, addr_ratio, pin_mismatch, house_mismatch = item[0], float(item[1]), float(item[2]), float(item[3]), float(item[4])
+        elif len(item) == 2:
+            cid, p = item[0], float(item[1])
+            addr_ratio, pin_mismatch, house_mismatch = 1.0, 0.0, 0.0
+        else:
+            cid, p = item[0], float(item[1])
+            addr_ratio, pin_mismatch, house_mismatch = 1.0, 0.0, 0.0
+            
+        if p >= tau:
+            valid.append((cid, p, addr_ratio, pin_mismatch, house_mismatch))
+            
+    if not valid:
+        return []
+    
+    # Sort descending by model probability
+    valid.sort(key=lambda x: x[1], reverse=True)
+    p_best = valid[0][1]
+    
+    accepted = []
+    for cid, p, addr_ratio, pin_mismatch, house_mismatch in valid:
+        if p >= high_conf_tau:
+            # Extreme conflict rejection: different PIN + near-zero address similarity
+            if pin_mismatch == 1.0 and addr_ratio < 0.20:
+                continue
+            accepted.append(cid)
+        else:
+            # Medium confidence checks:
+            # 1. Ambiguity margin drop relative to top candidate
+            if (p_best - p) > max_margin_drop:
+                continue
+            # 2. Conflicting house/door number on street
+            if house_mismatch == 1.0 and addr_ratio < 0.60:
+                continue
+            # 3. Conflicting postal PIN
+            if pin_mismatch == 1.0 and addr_ratio < 0.40:
+                continue
+            accepted.append(cid)
+            
+    return accepted
+
+
 def find_optimal_threshold(
     gt_map: Dict[str, Set[str]],
     pair_scores: List[Tuple[str, str, float]],
@@ -80,12 +139,11 @@ def find_optimal_threshold(
     tau_range: np.ndarray = None
 ) -> Tuple[float, float, Dict[float, float]]:
     """
-    Grid-search threshold tau to directly maximize Macro F0.5 on validation split.
+    Fine-grained grid-search threshold tau (step: 0.005) to directly maximize Macro F0.5 on validation split.
     """
     if tau_range is None:
-        tau_range = np.arange(0.50, 0.99, 0.01)
+        tau_range = np.arange(0.50, 0.995, 0.005)
         
-    # Group candidate predictions by S1 entity
     cand_by_s1 = defaultdict(list)
     for s1_id, cand_id, prob in pair_scores:
         if s1_id in val_s1_ids:
@@ -100,7 +158,7 @@ def find_optimal_threshold(
         preds = {}
         for s1_id in val_s1_ids:
             cands = cand_by_s1.get(s1_id, [])
-            matched = {cid for cid, p in cands if p >= tau}
+            matched = set(filter_candidates_with_margin(cands, tau=tau))
             preds[s1_id] = matched
             
         macro_f05, _, _ = evaluate_macro_f05(

@@ -34,7 +34,7 @@ from blocking import MultiKeyBlocker, CountryPartitionedBlocker
 from dataset import RecordCache, load_ground_truth_map, build_pairwise_dataset, ChunkedDatasetBuilder
 from features import compute_pair_features
 from models import train_xgboost, get_feature_importances
-from decision import find_optimal_threshold, evaluate_macro_f05
+from decision import find_optimal_threshold, evaluate_macro_f05, filter_candidates_with_margin
 import config
 
 print("=" * 80)
@@ -150,24 +150,56 @@ def train_production_model(
     blocker = MultiKeyBlocker(max_candidates_per_s1=max_cands)
     blocker.build_candidate_index_from_records(cand_records, show_progress=False)
 
-    # 5. Extract Features using ChunkedDatasetBuilder (Memory-safe chunks)
+    # 5. Measure Blocker Recall on Validation Cohort
+    val_cand_dict = {}
+    for s1_id, name, addr, cntry in val_s1_tuples:
+        val_cand_dict[s1_id] = blocker.retrieve_candidates_for_record(s1_id, name, addr, cntry)
+    
+    total_val_targets = 0
+    retrieved_val_targets = 0
+    for s1_id in val_s1_set:
+        targets = gt_map.get(s1_id, set())
+        total_val_targets += len(targets)
+        cands_set = set(val_cand_dict.get(s1_id, []))
+        retrieved_val_targets += len(targets & cands_set)
+    
+    if total_val_targets > 0:
+        blocker_recall = retrieved_val_targets / total_val_targets
+        print(f"   [Validation] Blocker Candidate Recall: {blocker_recall*100:.2f}% ({retrieved_val_targets:,}/{total_val_targets:,} true targets captured)")
+
+    # 6. Two-Stage Active Hard Negative Mining & Feature Extraction
     dataset_builder = ChunkedDatasetBuilder(chunk_size=chunk_size, max_cands=max_cands, hard_neg_ratio=config.HARD_NEGATIVE_RATIO)
 
-    print(f"   Building Training Feature Matrix in chunks of {chunk_size:,}...")
-    X_train, y_train, _ = dataset_builder.process_s1_chunks(
-        train_s1_tuples, cand_cache, blocker, gt_map, is_training=True, desc="Train Chunks"
+    print(f"   [Stage 1] Extracting baseline feature matrix in chunks of {chunk_size:,}...")
+    X_train_base, y_train_base, _ = dataset_builder.process_s1_chunks(
+        train_s1_tuples, cand_cache, blocker, gt_map, is_training=True, base_model=None, desc="Train Chunks Stage 1"
     )
 
-    print(f"   Building Validation Feature Matrix...")
+    print(f"   [Stage 1] Extracting validation feature matrix...")
     X_val, y_val, val_pairs = dataset_builder.process_s1_chunks(
         val_s1_tuples, cand_cache, blocker, gt_map, is_training=False, desc="Val Chunks"
     )
 
-    print(f"   X_train Matrix: {X_train.shape} | Positives: {int(y_train.sum()):,}")
-    print(f"   X_val Matrix  : {X_val.shape} | Positives: {int(y_val.sum()):,}")
+    print(f"   Baseline Training Matrix: {X_train_base.shape} | Positives: {int(y_train_base.sum()):,}")
+    print(f"   Validation Matrix       : {X_val.shape} | Positives: {int(y_val.sum()):,}")
 
-    # 6. Train XGBoost with Early Stopping
-    print("   Fitting production XGBoost model...")
+    # Stage 1: Fit fast baseline model to score and identify difficult false positive candidates
+    print("   [Stage 1] Training baseline model for active hard negative mining...")
+    base_model = train_xgboost(X_train_base, y_train_base, params={"n_estimators": 100, "max_depth": 5})
+
+    # Stage 2: Re-extract training pairs with active model-confused hard negatives mined across all candidate sets
+    print("   [Stage 2] Active Hard Negative Mining: Scoring all candidate negatives with baseline model...")
+    X_train, y_train, _ = dataset_builder.process_s1_chunks(
+        train_s1_tuples, cand_cache, blocker, gt_map, is_training=True,
+        base_model=base_model, desc="Train Chunks Stage 2"
+    )
+    print(f"   Hard-Negative Augmented Training Matrix: {X_train.shape} | Positives: {int(y_train.sum()):,}")
+
+    del X_train_base, y_train_base, base_model
+    gc.collect()
+
+    # 7. Fit Final Production XGBoost Classifier
+    print("   Fitting production XGBoost model on hard-negative augmented dataset...")
     model = train_xgboost(X_train, y_train, X_val, y_val)
 
     # Top feature importances
@@ -175,14 +207,15 @@ def train_production_model(
     top_5 = list(importances.items())[:5]
     print(f"   Top Features: {', '.join(f'{k} ({v*100:.1f}%)' for k, v in top_5)}")
 
-    # 7. Optimize Threshold tau directly on Macro F0.5
+    # 8. Fine-Grained Threshold Search tau on Macro F0.5
     val_probs = model.predict_proba(X_val)[:, 1]
+    # Pack validation features into scores for calibrated filtering
     val_pair_scores = [
         (val_pairs[i][0], val_pairs[i][1], float(val_probs[i]))
         for i in range(len(val_pairs))
     ]
     optimal_tau, val_f05, _ = find_optimal_threshold(gt_map, val_pair_scores, val_s1_set)
-    print(f"   Dynamic Threshold Search Complete -> Optimal tau = {optimal_tau:.3f} (Validation Macro F0.5: {val_f05:.4f})")
+    print(f"   Fine-Grained Threshold Search Complete -> Optimal tau = {optimal_tau:.3f} (Validation Macro F0.5: {val_f05:.4f})")
     
     # Clean up training data from memory
     blocker.clear()
@@ -328,8 +361,12 @@ def run_inference_on_test(
                         X_cand = np.array(feat_matrix, dtype=np.float32)
                         probs = model.predict_proba(X_cand)[:, 1]
 
-                        # Filter candidates >= optimal_tau
-                        matched = [valid_cands[i] for i, p in enumerate(probs) if p >= optimal_tau]
+                        # Filter candidates using calibrated margin decision logic with address/PIN verification
+                        cands_with_info = [
+                            (valid_cands[i], float(probs[i]), float(feat_matrix[i][9]), float(feat_matrix[i][18]), float(feat_matrix[i][26]))
+                            for i in range(len(valid_cands))
+                        ]
+                        matched = filter_candidates_with_margin(cands_with_info, tau=optimal_tau)
                         matched_str = ",".join(matched)
                         f_match.write(f"{s1_id}\t{matched_str}\n")
                     else:

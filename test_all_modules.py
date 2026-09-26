@@ -147,7 +147,7 @@ except Exception as e:
 print("\n--- 4. Testing features.py ---")
 try:
     from features import compute_pair_features, FEATURE_NAMES
-    assert len(FEATURE_NAMES) == 24, f"Expected 24 features, got {len(FEATURE_NAMES)}"
+    assert len(FEATURE_NAMES) == 32, f"Expected 32 features, got {len(FEATURE_NAMES)}"
 
     feat_vec = compute_pair_features(
         s1_name="Acme Supermarket",
@@ -158,11 +158,11 @@ try:
         cand_addr="100 Main Street, Suite 2, Austin, TX 78701",
         cand_country="US"
     )
-    assert len(feat_vec) == 24
+    assert len(feat_vec) == 32
     assert feat_vec[0] > 0.8  # name_ratio
     assert feat_vec[17] == 1.0  # pin_match (78701 == 78701)
     assert feat_vec[23] == 1.0  # is_source_2
-    report("features.py", "24-Dimensional Feature Vector", True, f"Features length={len(feat_vec)}")
+    report("features.py", "32-Dimensional Feature Vector", True, f"Features length={len(feat_vec)}")
 except Exception as e:
     report("features.py", "Feature Extraction Tests", False, str(e))
 
@@ -197,16 +197,16 @@ print("\n--- 6. Testing models.py ---")
 try:
     from models import train_xgboost, get_feature_importances
 
-    # Synthetic training on 24 features
+    # Synthetic training on 32 features
     rng = np.random.RandomState(42)
-    X_syn = rng.rand(100, 24).astype(np.float32)
+    X_syn = rng.rand(100, 32).astype(np.float32)
     y_syn = (X_syn[:, 0] + X_syn[:, 9] > 1.0).astype(np.float32)
 
     model = train_xgboost(X_syn, y_syn, params={"n_estimators": 10, "max_depth": 3})
     preds = model.predict_proba(X_syn)[:, 1]
     assert preds.shape == (100,)
     importances = get_feature_importances(model)
-    assert len(importances) == 24
+    assert len(importances) == 32
     report("models.py", "XGBoost Train & Feature Importance", True, f"Top feature: {list(importances.keys())[0]}")
 except Exception as e:
     report("models.py", "Model Training Tests", False, str(e))

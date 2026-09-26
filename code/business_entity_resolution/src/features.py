@@ -1,11 +1,11 @@
 """
 Pairwise Feature Engineering Module for Amazon ML Challenge 2026.
-Computes a comprehensive 24-dimensional feature vector per candidate pair using
-C++ accelerated RapidFuzz string metrics, token Jaccard overlaps, numeric door/plot
-alignments, and non-hardcoded postal code / geographic indicators.
+Computes a comprehensive 32-dimensional feature vector per candidate pair using
+C++ accelerated RapidFuzz string metrics, subword character n-grams, token Jaccards,
+structured door/plot number alignments, and non-linear name-address interactions.
 """
 
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 import numpy as np
 from rapidfuzz import fuzz, distance
 
@@ -48,8 +48,29 @@ FEATURE_NAMES = [
     # Numeric token & Source features (21-23)
     "numeric_token_jaccard",
     "has_common_number",
-    "is_source_2"
+    "is_source_2",
+    
+    # Subword Character N-Gram features (24-25)
+    "name_char3_jaccard",
+    "name_char4_jaccard",
+    
+    # Structured Door / Number Agreement (26)
+    "house_num_mismatch",
+    
+    # Non-linear Interaction & Ambiguity features (27-31)
+    "name_addr_mult",
+    "name_token_set_addr_mult",
+    "name_exact_pin_match",
+    "strong_name_conflicting_addr",
+    "pin_conflict_strong_name"
 ]
+
+
+def _get_char_ngrams(s: str, n: int) -> Set[str]:
+    """Helper to extract character n-grams from a string."""
+    if len(s) < n:
+        return {s} if s else set()
+    return {s[i:i+n] for i in range(len(s) - n + 1)}
 
 
 def compute_pair_features(
@@ -71,7 +92,7 @@ def compute_pair_features(
     cand_nums: Optional[set] = None
 ) -> List[float]:
     """
-    Extract a 24-dimensional feature vector for a single (S1, Candidate) pair.
+    Extract a 32-dimensional feature vector for a single (S1, Candidate) pair.
     """
     # 1. Normalize if not pre-computed
     n1 = s1_norm_name if s1_norm_name is not None else normalize_name(s1_name)
@@ -121,7 +142,7 @@ def compute_pair_features(
         addr_word_jaccard = 0.0
         addr_len_diff = 1.0
 
-    # 4. Geographic & Postal Code Features (Empirical / Non-hardcoded)
+    # 4. Geographic & Postal Code Features
     country_exact = 1.0 if (c1 and c2 and c1 == c2) else 0.0
     
     has_p1 = p1 is not None and len(p1) > 0
@@ -135,6 +156,26 @@ def compute_pair_features(
     num_jaccard = len(nums1 & nums2) / max(len(nums1 | nums2), 1) if (nums1 and nums2) else 0.0
     common_num = 1.0 if (nums1 and nums2 and len(nums1 & nums2) > 0) else 0.0
     is_s2 = 1.0 if cand_id.startswith("S2-") else 0.0
+
+    # 6. Character Subword N-Gram Overlap (Typo & Transliteration resilience)
+    ng3_1, ng3_2 = _get_char_ngrams(n1, 3), _get_char_ngrams(n2, 3)
+    name_char3_jaccard = len(ng3_1 & ng3_2) / max(len(ng3_1 | ng3_2), 1) if (ng3_1 and ng3_2) else 0.0
+
+    ng4_1, ng4_2 = _get_char_ngrams(n1, 4), _get_char_ngrams(n2, 4)
+    name_char4_jaccard = len(ng4_1 & ng4_2) / max(len(ng4_1 | ng4_2), 1) if (ng4_1 and ng4_2) else 0.0
+
+    # 7. Structured Door / Plot Number Disagreement
+    house_num_mismatch = 1.0 if (nums1 and nums2 and len(nums1 & nums2) == 0) else 0.0
+
+    # 8. Name <-> Address Consistency & Non-linear Interaction Signals
+    name_addr_mult = name_ratio * addr_ratio
+    name_token_set_addr_mult = name_token_set_ratio * addr_token_set_ratio
+    name_exact_pin_match = name_exact * pin_match
+
+    # Flag for same chain / brand name at conflicting location
+    strong_name_conflicting_addr = 1.0 if (name_ratio >= 0.85 and addr_ratio < 0.40 and not addr_empty) else 0.0
+    # Flag for chain store with different postal code
+    pin_conflict_strong_name = 1.0 if (pin_mismatch == 1.0 and name_ratio >= 0.80) else 0.0
 
     return [
         name_ratio,
@@ -160,5 +201,13 @@ def compute_pair_features(
         both_pins,
         num_jaccard,
         common_num,
-        is_s2
+        is_s2,
+        name_char3_jaccard,
+        name_char4_jaccard,
+        house_num_mismatch,
+        name_addr_mult,
+        name_token_set_addr_mult,
+        name_exact_pin_match,
+        strong_name_conflicting_addr,
+        pin_conflict_strong_name
     ]

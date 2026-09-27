@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-from difflib import SequenceMatcher
 import hashlib
 import json
 import os
@@ -18,6 +17,15 @@ import sqlite3
 import tempfile
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
+
+try:
+    from rapidfuzz import fuzz
+    def similarity(a: str, b: str) -> float:
+        return fuzz.ratio(a, b) / 100.0 if a and b else 0.0
+except ImportError:
+    from difflib import SequenceMatcher
+    def similarity(a: str, b: str) -> float:
+        return SequenceMatcher(None, a, b, autojunk=False).ratio() if a and b else 0.0
 
 from normalization import (
     extract_numeric_tokens,
@@ -51,6 +59,9 @@ def rows(path: Path):
 
 
 def build_index(db: sqlite3.Connection, source_paths: Iterable[Path]) -> None:
+    db.execute("PRAGMA journal_mode = MEMORY")
+    db.execute("PRAGMA synchronous = OFF")
+    db.execute("PRAGMA cache_size = -64000")
     db.execute("DROP TABLE IF EXISTS candidates")
     db.execute("CREATE TABLE candidates (id TEXT PRIMARY KEY, country TEXT, name TEXT, address TEXT, postal TEXT, numbers TEXT)")
     for path in source_paths:
@@ -76,11 +87,6 @@ def build_index(db: sqlite3.Connection, source_paths: Iterable[Path]) -> None:
 
 def tokens(s: str) -> Set[str]:
     return set(s.split()) if s else set()
-
-
-def similarity(a: str, b: str) -> float:
-    """Conservative stdlib string similarity after canonical normalization."""
-    return SequenceMatcher(None, a, b, autojunk=False).ratio() if a and b else 0.0
 
 
 def predict_one(db: sqlite3.Connection, record: Tuple[str, str, str, str]):
@@ -157,7 +163,7 @@ def load_truth(path: Path) -> Dict[str, Set[str]]:
     return truth
 
 
-def score_validation(db: sqlite3.Connection, s1_path: Path, truth: Dict[str, Set[str]], report_path: Path) -> None:
+def score_validation(db: sqlite3.Connection, s1_path: Path, truth: Dict[str, Set[str]], report_path: Path, val_sample: int = 5000) -> None:
     n_entities = n_exact = n_pred = n_true = n_tp = n_predicted_entities = 0
     macro_f05 = 0.0
     with report_path.open("w", encoding="utf-8", newline="") as out:
@@ -168,6 +174,8 @@ def score_validation(db: sqlite3.Connection, s1_path: Path, truth: Dict[str, Set
             # Stable, entity-level holdout; no random split dependency.
             if int(hashlib.sha1(sid.encode("utf-8")).hexdigest()[:8], 16) % 5 != 0:
                 continue
+            if val_sample > 0 and n_entities >= val_sample:
+                break
             _, pred_list = predict_one(db, rec)
             pred, gold = set(pred_list), truth.get(sid, set())
             writer.writerow((sid, ",".join(sorted(pred))))
@@ -217,6 +225,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Strict, precision-first business entity matching")
     parser.add_argument("--dataset", type=Path, default=DATA, help="Dataset root containing train/ and test/")
     parser.add_argument("--output", type=Path, default=OUT, help="Output directory")
+    parser.add_argument("--val-sample", type=int, default=5000, help="Number of validation entities to evaluate (0 for full dataset)")
     parser.add_argument("--skip-validation", action="store_true", help="Skip held-out training validation")
     parser.add_argument("--validate-only", action="store_true", help="Run held-out validation without building test predictions")
     args = parser.parse_args()
@@ -235,9 +244,9 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="strict_match_") as temp:
         db = sqlite3.connect(str(Path(temp) / "candidate_index.sqlite"))
         if not args.skip_validation:
-            print("Validating strict rules on a stable 20% held-out slice of training source 1...")
+            print(f"Validating strict rules on held-out slice of training source 1 (sample limit: {args.val_sample or 'ALL'})...")
             build_index(db, train_sources)
-            score_validation(db, train_s1, load_truth(truth_path), args.output / "code1_validation.tsv")
+            score_validation(db, train_s1, load_truth(truth_path), args.output / "code1_validation.tsv", val_sample=args.val_sample)
             if args.validate_only:
                 db.close()
                 return

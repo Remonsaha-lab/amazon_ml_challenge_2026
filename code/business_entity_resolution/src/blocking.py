@@ -18,7 +18,8 @@ from normalization import (
     extract_postal_code,
     extract_numeric_tokens,
     normalize_country,
-    is_empty_or_nan
+    is_empty_or_nan,
+    transliterate_brahmic
 )
 
 # Common generic stopwords to ignore for keys
@@ -38,6 +39,7 @@ ADDRESS_STOPWORDS = {
 
 DEFAULT_STRATEGY_WEIGHTS = {
     "B1": 15.0,  # Exact Clean Name
+    "B9": 10.0,  # Spaceless / Concatenated Name
     "B2": 6.0,   # Name Token
     "B5": 5.0,   # Distinctive Numeric / Phone / Building ID
     "B6": 4.0,   # Door Number + Locality Token
@@ -135,6 +137,26 @@ def generate_blocking_keys(
         if len(tok) >= 4:
             for i in range(len(tok) - 2):
                 keys["B8"].append(f"{c_norm}_c3_{tok[i:i+3]}")
+                
+    # B9: Spaceless / Concatenated Name Key (bridges "Burger Solution" <-> "Burgersolution")
+    n_spaceless = "".join(c for c in n_norm if c.isalnum())
+    if len(n_spaceless) >= 4:
+        keys["B9"].append(f"{c_norm}_spaceless_{n_spaceless}")
+
+    # B10: Indic Script Transliteration (Devanagari, Bengali, Gujarati, Kannada, Tamil -> Latin)
+    trans_name = normalize_name(transliterate_brahmic(clean_name))
+    if trans_name and trans_name != n_norm:
+        keys["B1"].append(f"{c_norm}_name_{trans_name}")
+        trans_tokens = [t for t in trans_name.split() if t not in NAME_STOPWORDS and len(t) >= 3]
+        for tok in trans_tokens[:4]:
+            keys["B2"].append(f"{c_norm}_ntok_{tok}")
+        if len(trans_tokens) >= 2:
+            keys["B3"].append(f"{c_norm}_pfx_{trans_tokens[0][:4]}_{trans_tokens[1][:2]}")
+        elif len(trans_tokens) == 1 and len(trans_tokens[0]) >= 4:
+            keys["B3"].append(f"{c_norm}_pfx_{trans_tokens[0][:5]}")
+        trans_spaceless = "".join(c for c in trans_name if c.isalnum())
+        if len(trans_spaceless) >= 4:
+            keys["B9"].append(f"{c_norm}_spaceless_{trans_spaceless}")
         
     return keys
 
